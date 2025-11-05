@@ -7,6 +7,13 @@ Open fault detection is, for whatever reason, not reliable. The offset between T
 
 ## Usage Notes
 
+### Compilation
+To get production ready code (that is, code with logging disabled), run:
+```bash
+cargo run --release --no-default-features
+```
+Which will automatically compile and flash the production code. For reference, the binary will be placed in `target/thumbv8m.main-none-eabihf/release/ThermoSoft-rs`
+
 ### Error states
 During a sensor fault, the firmware will simply return a reading of 0 for that thermocouple. It will keep trying to clear the state during every supposed reading, which will make the fault LED blink under normal operating conditions instead of holding steady. Because of the high impedance nature of this chip's inputs, you may have to literally tap on the inputs to get the fault led to blink consistently.
 
