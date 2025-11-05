@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+    //   "preLaunchTask": "${defaultBuildTask}",
+      "type": "probe-rs-debug",
+      "request": "launch",
+      "name": "probe_rs Executable Test",
+      "flashingConfig": {
+        "flashingEnabled": true,
+      },
+      //!MODIFY
+      "chip": "STM32H563RITx",
+      "coreConfigs": [
+        {
+          //!MODIFY
+          "programBinary": "./target/thumbv8m.main-none-eabihf/debug/ThermoSoft-rs"
+        }
+      ]
+    }
+  ]
+}

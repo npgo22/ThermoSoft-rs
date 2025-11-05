@@ -1,0 +1,57 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Start PyOCD Server",
+            "type": "shell",
+            "command": "pyocd",
+            "args": [
+                "gdbserver",
+                "--port", "50000",
+                "--telnet-port", "50001",
+                "-u", "000100011a5a5bb6000000000001cbbda5a5a5a597969908",
+                "-t", "stm32h563zitx"
+            ],
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(.*)$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*Target type is.*$",
+                    "endsPattern": "^.*GDB server listening on port.*$"
+                }
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": true,
+                "clear": false,
+                "close": false
+            }
+        },
+        {
+            "label": "Stop PyOCD Server",
+            "type": "shell",
+            "command": "killall",
+            "args": [
+                "pyocd"
+            ],
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        }
+    ]
+}
