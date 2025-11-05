@@ -8,7 +8,6 @@ use max31856::FaultStatus;
 use max31856::registers::*;
 
 // Packet batching configuration
-pub const SENSOR_COUNT: usize = 4;
 pub const BATCH_SIZE: usize = 10;
 
 /// Packed structure for batched sensor data packet
@@ -56,6 +55,7 @@ impl SensorDataPacket {
 }
 
 /// Log faults for a sensor
+#[cfg(feature = "defmt")]
 pub fn log_faults(sensor_num: u8, faults: &FaultStatus) {
     if faults.open {
         defmt::warn!("Sensor {} - Open circuit fault", sensor_num);
@@ -81,6 +81,12 @@ pub fn log_faults(sensor_num: u8, faults: &FaultStatus) {
     if faults.tc_low {
         defmt::warn!("Sensor {} - Thermocouple low fault", sensor_num);
     }
+}
+
+/// Log faults for a sensor (no-op when defmt is disabled)
+#[cfg(not(feature = "defmt"))]
+pub fn log_faults(_sensor_num: u8, _faults: &FaultStatus) {
+    // No-op without defmt
 }
 
 /// Configure MAX31856 with application-specific settings
@@ -123,30 +129,37 @@ where
     configure_max31856(spi)?;
 
     // Read back and verify configuration
-    let regs = max31856::read_all_config_registers(spi)?;
+    #[cfg(feature = "defmt")]
+    {
+        let regs = max31856::read_all_config_registers(spi)?;
 
-    defmt::info!(
-        "Sensor {} - CR0={:02X} CR1={:02X} MASK={:02X} SR={:02X}",
-        sensor_num,
-        regs[0],
-        regs[1],
-        regs[2],
-        regs[15]
-    );
-    defmt::info!(
-        "Sensor {} - CJ thresholds: Low={:02X} High={:02X}",
-        sensor_num,
-        regs[4],
-        regs[3]
-    );
-    defmt::info!(
-        "Sensor {} - TC thresholds: Low={:02X}{:02X} High={:02X}{:02X}",
-        sensor_num,
-        regs[7],
-        regs[8],
-        regs[5],
-        regs[6]
-    );
+        defmt::info!(
+            "Sensor {} - CR0={:02X} CR1={:02X} MASK={:02X} SR={:02X}",
+            sensor_num,
+            regs[0],
+            regs[1],
+            regs[2],
+            regs[15]
+        );
+        defmt::info!(
+            "Sensor {} - CJ thresholds: Low={:02X} High={:02X}",
+            sensor_num,
+            regs[4],
+            regs[3]
+        );
+        defmt::info!(
+            "Sensor {} - TC thresholds: Low={:02X}{:02X} High={:02X}{:02X}",
+            sensor_num,
+            regs[7],
+            regs[8],
+            regs[5],
+            regs[6]
+        );
+    }
+
+    // Suppress unused variable warning when defmt is disabled
+    #[cfg(not(feature = "defmt"))]
+    let _ = sensor_num;
 
     Ok(())
 }

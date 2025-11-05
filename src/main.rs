@@ -11,9 +11,19 @@ use {defmt_rtt as _, panic_probe as _};
 
 use ThermoSoft_rs::{BATCH_SIZE, SensorDataPacket, log_faults, max31856};
 
+// Conditional logging macro - uses defmt when available, no-op otherwise
+#[cfg(feature = "defmt")]
 use defmt::info;
 
+#[cfg(not(feature = "defmt"))]
+macro_rules! info {
+    ($($arg:tt)*) => {
+        // No-op when defmt is disabled
+    };
+}
+
 use embassy_executor::Spawner;
+use embassy_futures::select::{Either, select};
 use embassy_net::{
     Ipv4Address, Ipv4Cidr, StackResources,
     udp::{PacketMetadata, UdpSocket},
@@ -29,6 +39,7 @@ use embassy_stm32::rng::Rng;
 use embassy_stm32::spi::{MODE_1, Spi};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::{Config, bind_interrupts, eth, peripherals, rng};
+use embassy_time::Duration;
 use embassy_time::Timer;
 
 use heapless::Vec;
@@ -93,9 +104,9 @@ async fn main(spawner: Spawner) -> ! {
 
     // Toggle ETH NRST (PA0) for reset
     let mut eth_nrst = Output::new(p.PA0, Level::Low, Speed::Low);
-    Timer::after_millis(100).await;
+    Timer::after_millis(500).await;
     eth_nrst.set_high();
-    Timer::after_millis(2000).await;
+    Timer::after_millis(500).await;
 
     // Generate random seed.
     let mut rng = Rng::new(p.RNG, Irqs);
@@ -104,6 +115,11 @@ async fn main(spawner: Spawner) -> ! {
     let seed = u64::from_le_bytes(seed);
 
     let mac_addr = [0xE8, 0x80, 0x88, 0x59, 0x0D, 0x70];
+
+    // Status LEDs
+    let mut link_status_led = Output::new(p.PC7, Level::Low, Speed::Low);
+    let mut data_send_led = Output::new(p.PC8, Level::Low, Speed::Low);
+    let mut send_error_led = Output::new(p.PC9, Level::Low, Speed::Low);
 
     static PACKETS: StaticCell<PacketQueue<16, 16>> = StaticCell::new();
     let device = Ethernet::new(
@@ -125,14 +141,14 @@ async fn main(spawner: Spawner) -> ! {
 
     // let config = embassy_net::Config::dhcpv4(Default::default());
     let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 88, 61), 24),
+        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 88, 157), 24), // pi *100 / 2
         dns_servers: Vec::<Ipv4Address, 3>::new(),
         gateway: Some(Ipv4Address::new(192, 168, 88, 1)),
         // gateway: None
     });
 
-    // Init network stack
-    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+    // Init network stack - increase resources for better UDP performance
+    static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
     let (stack, runner) =
         embassy_net::new(device, config, RESOURCES.init(StackResources::new()), seed);
 
@@ -146,8 +162,12 @@ async fn main(spawner: Spawner) -> ! {
     loop {
         if stack.is_link_up() {
             info!("Link is UP!");
+            link_status_led.set_high();
             break;
         }
+        link_status_led.set_high();
+        Timer::after_millis(100).await;
+        link_status_led.set_low();
         Timer::after_millis(100).await;
     }
 
@@ -174,10 +194,10 @@ async fn main(spawner: Spawner) -> ! {
     let cs3 = Output::new(p.PC14, Level::High, Speed::VeryHigh); // CS3
     let cs4 = Output::new(p.PC2, Level::High, Speed::VeryHigh); // CS4
 
-    let mut nfault1 = Input::new(p.PA10, Pull::Down); // NFAULT1
-    let mut nfault2 = Input::new(p.PC11, Pull::Down); // NFAULT2
-    let mut nfault3 = Input::new(p.PC13, Pull::Down); // NFAULT3
-    let mut nfault4 = Input::new(p.PC0, Pull::Down); // NFAULT4
+    let mut nfault1 = Input::new(p.PA10, Pull::Up); // NFAULT1
+    let mut nfault2 = Input::new(p.PC11, Pull::Up); // NFAULT2
+    let mut nfault3 = Input::new(p.PC13, Pull::Up); // NFAULT3
+    let mut nfault4 = Input::new(p.PC0, Pull::Up); // NFAULT4
 
     let mut ndrdy1 = Input::new(p.PA9, Pull::Up); // DRDY1
     let mut ndrdy2 = Input::new(p.PA8, Pull::Up); // DRDY2
@@ -201,11 +221,11 @@ async fn main(spawner: Spawner) -> ! {
     ThermoSoft_rs::configure_and_verify_max31856(&mut spi_dev4, 4)
         .expect("Failed to configure sensor 4");
 
-    // UDP socket setup
-    let mut rx_meta = [PacketMetadata::EMPTY; 4];
-    let mut rx_buffer = [0; 512];
-    let mut tx_meta = [PacketMetadata::EMPTY; 4];
-    let mut tx_buffer = [0; 512];
+    // UDP socket setup - increased buffer sizes
+    let mut rx_meta = [PacketMetadata::EMPTY; 16];
+    let mut rx_buffer = [0; 2048];
+    let mut tx_meta = [PacketMetadata::EMPTY; 16];
+    let mut tx_buffer = [0; 2048];
 
     let mut udp_socket = UdpSocket::new(
         stack,
@@ -219,7 +239,7 @@ async fn main(spawner: Spawner) -> ! {
     udp_socket.bind(0).unwrap();
 
     // Remote UDP destination (hardcoded)
-    let remote_endpoint = (Ipv4Address::new(192, 168, 88, 100), 8000);
+    let remote_endpoint = (Ipv4Address::new(192, 168, 88, 251), 1683);
     info!("Will send UDP packets to {:?}", remote_endpoint);
 
     let mut packet = SensorDataPacket::new();
@@ -258,6 +278,13 @@ async fn main(spawner: Spawner) -> ! {
         // Always print temperature readings (ADC counts)
         info!("Temps [ADC]: {} {} {} {}", tc1, tc2, tc3, tc4);
 
+        while !stack.is_link_up() {
+            link_status_led.set_low();
+            Timer::after_millis(100).await;
+            link_status_led.set_high();
+            Timer::after_millis(100).await;
+        }
+
         // Store readings in batch
         packet.tc1_temps[batch_index] = tc1;
         packet.tc2_temps[batch_index] = tc2;
@@ -271,18 +298,35 @@ async fn main(spawner: Spawner) -> ! {
             packet.packet_tag = packet_counter;
             packet.packet_time = embassy_time::Instant::now().as_millis() as u32;
 
-            // Send UDP packet
-            match udp_socket.send_to(packet.as_bytes(), remote_endpoint).await {
-                Ok(_) => {
+            // Send UDP packet with timeout to prevent hanging
+            data_send_led.set_high();
+
+            match select(
+                udp_socket.send_to(packet.as_bytes(), remote_endpoint),
+                Timer::after(Duration::from_secs(1)),
+            )
+            .await
+            {
+                Either::First(Ok(_)) => {
                     info!(
                         "Sent packet #{} with {} readings",
                         packet_counter, BATCH_SIZE
                     );
                 }
-                Err(e) => {
-                    info!("UDP send error: {:?}", e);
+                Either::First(Err(_e)) => {
+                    info!("UDP send error: {:?}", _e);
+                    send_error_led.set_high();
+                    Timer::after_millis(100).await;
+                    send_error_led.set_low();
+                }
+                Either::Second(_) => {
+                    info!("UDP send timeout - packet #{}", packet_counter);
+                    send_error_led.set_high();
+                    Timer::after_millis(100).await;
+                    send_error_led.set_low();
                 }
             }
+            data_send_led.set_low();
 
             packet_counter += 1;
             batch_index = 0;

@@ -2,7 +2,8 @@ use crate::max31856::registers::*;
 use embedded_hal::digital::InputPin;
 use embedded_hal::spi::SpiDevice;
 
-#[derive(Debug, Clone, Copy, defmt::Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FaultStatus {
     pub cj_range: bool, // Cold-Junction Out-of-Range
     pub tc_range: bool, // Thermocouple Out-of-Range
@@ -168,7 +169,7 @@ where
     // First check fault status before reading temperature
     let mut fault_buffer = [0u8; 2];
     fault_buffer[0] = SR_READ;
-    let fault_status = if spi.transfer_in_place(&mut fault_buffer).is_ok() {
+    let mut fault_status = if spi.transfer_in_place(&mut fault_buffer).is_ok() {
         let status = FaultStatus::from_register(fault_buffer[1]);
 
         if status.has_fault() {
@@ -194,9 +195,25 @@ where
     let temp_counts = if spi.transfer_in_place(&mut buffer).is_ok() {
         // The data format is: [raw_val[0] << 16] | [raw_val[1] << 8] | [raw_val[2]]
         // Then shift right by 5 to get the 19-bit value
-        let raw_val_signed =
+        let mut raw_val_signed =
             ((buffer[1] as i32) << 16) | ((buffer[2] as i32) << 8) | (buffer[3] as i32);
-        raw_val_signed >> 5
+        raw_val_signed >>= 5;
+        // Sometimes ndrdy is faster than nfault, leading to an OC error.
+        // During this event, the max reading is given, so we return 0 and generate and error.
+        if raw_val_signed == 175623 {
+            raw_val_signed = 0;
+            fault_status = Some(FaultStatus {
+                cj_range: false,
+                tc_range: false,
+                cj_high: false,
+                cj_low: false,
+                tc_high: false,
+                tc_low: false,
+                ovuv: false,
+                open: true,
+            });
+        }
+        raw_val_signed
     } else {
         0 // Return 0 if SPI read fails
     };

@@ -1,0 +1,3 @@
+{
+    "rust-analyzer.cargo.allTargets": false // silences the weird lib test warning on no-std
+}
