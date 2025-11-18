@@ -239,7 +239,7 @@ async fn main(spawner: Spawner) -> ! {
     udp_socket.bind(0).unwrap();
 
     // Remote UDP destination (hardcoded)
-    let remote_endpoint = (Ipv4Address::new(192, 168, 88, 251), 1683);
+    let remote_endpoint = (Ipv4Address::new(192, 168, 88, 251), 1684);
     info!("Will send UDP packets to {:?}", remote_endpoint);
 
     let mut packet = SensorDataPacket::new();
@@ -295,7 +295,7 @@ async fn main(spawner: Spawner) -> ! {
 
         // When batch is full, send UDP packet
         if batch_index >= BATCH_SIZE {
-            packet.packet_tag = packet_counter;
+            // packet.packet_tag = 9;
             packet.packet_time = embassy_time::Instant::now().as_millis() as u32;
 
             // Send UDP packet with timeout to prevent hanging
